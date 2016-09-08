@@ -72,25 +72,31 @@ class BdistAmp(Command):
             c.start(cont_id)
             dir_util.copy_tree(cur_dir, os.path.join(hvol_path,dir_name))
             command_1 = "cd " + cvol_path + dir_name + " && python " + sys.argv[0] + " install"
-            exec_comm = """bash -c "%s" """ % command_1
-            exec_1 = c.exec_create(cont_id, exec_comm)
+            exec_comm_1 = """bash -c "%s" """ % command_1
+            exec_1 = c.exec_create(cont_id, exec_comm_1)
             for line in c.exec_start(exec_1, stream=True):
                 print line
 
             cur_pack = UnpackedSDist(cur_dir)
             pack_name = (cur_pack.name + '-' + cur_pack.version).encode('ascii')
-            diff_file = open(hvol_path + '/diff_text.txt', 'w')
             diffs = c.diff(cont_id)
+            diff_file = open(hvol_path + '/diff_text_not_true.txt', 'w')
             for i in diffs:
                 if i['Kind'] == 1:
                     diff_file.writelines(i['Path'] + '\n')
 
             diff_file.close()
-            command_2 = "tar", "-cvf", \
+            command_2 = "cd " + cvol_path + dir_name + " && python " + sys.argv[0] + " gendiff"
+            exec_comm_2 = """bash -c "%s" """ % command_2
+            exec_2 = c.exec_create(cont_id, exec_comm_2)
+            for line in c.exec_start(exec_2, stream=True):
+                print line
+
+            exec_comm_3 = "tar", "-cvf", \
                         cvol_path + pack_name + ".tar.gz", "-T", \
                         cvol_path + "/diff_text.txt"
-            exec_2 = c.exec_create(cont_id,command_2)
-            for line in c.exec_start(exec_2, stream=True):
+            exec_3 = c.exec_create(cont_id,exec_comm_3)
+            for line in c.exec_start(exec_3, stream=True):
                 print line
 
             c.stop(cont_id, timeout=1)
@@ -173,6 +179,36 @@ class UploadBdist(Command):
                                files=f)
 
 
+class GenDiffFile(Command):
+
+    description = "not for users"
+
+    user_options = []
+
+    def initialize_options(self):
+
+        pass
+
+    def finalize_options(self):
+
+        pass
+
+    def run(self):
+
+
+        cvol_path = "/export/"
+        diff_file_not_true = open(os.path.join(cvol_path, "diff_text_not_true.txt"), 'r')
+        diff_file = open(os.path.join(cvol_path, "diff_text.txt"), 'w')
+        for i in diff_file_not_true.readlines():
+            i = i.split()[0]
+            if not os.path.isdir(i):
+                diff_file.writelines(i + "\n")
+
+        diff_file_not_true.close()
+        diff_file.close()
+
+
+
 # for use in your projects
 # add following lines to setup.py:
 # from ampdist.py import BdistAmp
@@ -180,6 +216,7 @@ class UploadBdist(Command):
 #              ...
 #            cmdclass={'bdist_amp': BdistAmp,
 #                       'upload_amp': UploadBdist,
+#                       'gendiff': GenDiffFile,
 #                       },
 #               ...
 #        )
