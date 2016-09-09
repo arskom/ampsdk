@@ -1,18 +1,141 @@
 #!/usr/bin/python
 # -*- coding: <utf-8> -*-
-
+import ConfigParser
 import subprocess
 import sys
 import os
 import tempfile
-import shutil
-from setuptools import find_packages
+from distutils import dir_util, file_util
+from distutils.spawn import find_executable
+import requests
 from setuptools import Command
+try:
+    import docker
+except:
+    pass
+
+try:
+    from pkginfo import UnpackedSDist
+except:
+    pass
+
+
+gen_diff_py = """
+#!/usr/bin/python
+# -*- coding: <utf-8> -*-
+import os
+
+cvol_path = "/export/"
+diff_file_not_true = open(os.path.join(cvol_path, "diff_text_not_true.txt"), 'r')
+diff_file = open(os.path.join(cvol_path, "diff_text.txt"), 'w')
+for i in diff_file_not_true.readlines():
+    i = i.split()[0]
+    if not os.path.isdir(i):
+        diff_file.writelines(i + "\\n")
+
+diff_file_not_true.close()
+diff_file.close()
+"""
+
+
+class AmpDistClient(object):
+
+    def __init__(self, hvol_path=None):
+        self.client = docker.Client()
+        if hvol_path is None:
+            self.hvol_path = tempfile.mkdtemp()
+
+        else:
+            self.hvol_path = hvol_path
+
+        self.cvol_path = "/export/"
+        self.base_full_name = None
+        self.base_name = None
+        self.base_ver = None
+        self.cont_id = None
+        self.debug_mode = False
+
+    def exec_starter(self, command, stream=False):
+        _exec = self.client.exec_create(self.cont_id, command)
+        if stream is True:
+            for i in self.client.exec_start(_exec, stream=True):
+                print i
+
+        else:
+            self.client.exec_start(_exec)
+
+    def gen_base_full_name(self, conf_path=None):
+        if conf_path is None and (self.base_name is None or self.base_ver is None):
+            print "must give conf_path or base_name and base_ver."
+            return None
+
+        elif conf_path is not None:
+            config = ConfigParser.RawConfigParser()
+            config.read(conf_path)
+            self.base_name = config.get('Image', 'base_name')
+            self.base_ver = config.get('Image', 'base_ver')
+            self.base_full_name = self.base_name + ":" + self.base_ver
+            return self.base_full_name
+
+        else:
+            self.base_full_name = self.base_name + ":" + self.base_ver
+            return self.base_full_name
+
+    def gen_diff_file(self):
+        with open(os.path.join(self.hvol_path, "gen_diff.py"), 'w') \
+                as gen_diff_file:
+            gen_diff_file.writelines(gen_diff_py)
+
+    def exec_gen_diff_file(self, stream=False):
+        self.gen_diff_file_not_true()
+        self.gen_diff_file()
+        command = "cd " + self.cvol_path + " && python gen_diff.py"
+        exec_comm = """bash -c "%s" """ % command
+        self.exec_starter(exec_comm, stream=stream)
+
+    def gen_diff_file_not_true(self):
+        diffs = self.client.diff(self.cont_id)
+        with open(self.hvol_path + '/diff_text_not_true.txt', 'w') \
+                as diff_file:
+            for i in diffs:
+                if i['Kind'] == 1:
+                    diff_file.writelines(i['Path'] + '\n')
+
+    def diff_packager(self, pack_name, stream=False):
+        exec_comm = "tar", "-cvf", \
+                      os.path.join(self.cvol_path, pack_name), "-T", \
+                      os.path.join(self.cvol_path, "diff_text.txt")
+        self.exec_starter(exec_comm, stream=stream)
+
+    def cont_destroyer(self, timeout=1):
+        self.client.stop(self.cont_id, timeout=timeout)
+        self.client.remove_container(self.cont_id)
+
+    def image_search_and_download(self):
+        im_list = self.client.images(name=self.base_full_name, quiet=True)
+        if im_list:
+            pass
+        else:
+            print self.base_full_name + " is not found."
+            self.client.pull(self.base_name, tag=self.base_ver)
+
+    def container_starter(self, start=True):
+        self.cont_id = self.client.create_container(self.base_full_name,
+                                                    command="/bin/bash",
+                                                    volumes=[self.cvol_path],
+                                                    host_config=self.client.create_host_config(binds={
+                                                        self.hvol_path: self.cvol_path
+                                                    }),
+                                                    detach=True, stdin_open=True, tty=True)['Id']
+        if start is True:
+            self.client.start(self.cont_id)
+
+        return self.cont_id
 
 
 class BdistAmp(Command):
 
-    description = "bdist command for amp (must use with sudo)"
+    description = "bdist_amp command for amp (must use with sudo)"
 
     user_options = []
 
@@ -26,58 +149,118 @@ class BdistAmp(Command):
 
     def run(self):
 
-        arsbas = "arskom/base"
-        try:
-            im_id = subprocess.check_output(["docker", "images", "-q", arsbas])
-            im_id = im_id.split()[0]
-        except OSError as e:
-            print "docker command is not found"
-            print "installing docker.io..."
-            subprocess.call(["wget", "-qO-", "https://get.docker.com/", "|", "sh"])
-            im_id = subprocess.check_output(["docker", "images", "-q", arsbas])
-            im_id = im_id.split()[0]
-
-        if not im_id.isalnum():
-            print arsbas + " is not found."
-            subprocess.call(["docker", "pull", arsbas])
-
-        hvol_path = tempfile.mkdtemp()                                  # Host shared data volume.
-        cvol_path = "/export/"                                          # Container shared data volume.
-        subprocess.call(["docker", "run", "-v", hvol_path + ":" + cvol_path,
-                         "-itd", arsbas, "/bin/bash"])
-        cont_id = subprocess.check_output(["docker", "ps", "-alq"])
-        cont_id = cont_id.split()[0]
+        amp_dist = AmpDistClient()
         cur_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
         dir_name = cur_dir.rsplit("/", 1)[1]
-        subprocess.call(["docker", "cp", cur_dir, cont_id + ":" + cvol_path])
-        subprocess.call(["docker", "exec", cont_id, "bash", "-c", "cd " + cvol_path + dir_name +
-                        " && python " + sys.argv[0] + " install"])
-        pack_name = find_packages()[0]
-        diffs = subprocess.check_output(['docker', 'diff', cont_id])
-        diff_list = diffs.split('\n')
-        diff_file = open(hvol_path + '/diff_text.txt', 'w')
-        for line in diff_list:
-            if line.split(' ')[0] == 'A':
-                diff_file.writelines(line.split(' ')[1] + '\n')
+        if not os.path.exists(os.path.join(cur_dir, "ampdist.conf")):
+            print cur_dir + "ampdist.conf not found."
 
-        diff_file.close()
-        subprocess.call(["docker", "exec", cont_id,
-                         "tar", "-cvPf", cvol_path + pack_name + ".tar.gz",
-                         "-T", cvol_path + "/diff_text.txt"])
-        subprocess.call(["docker", "stop", cont_id])
-        subprocess.call(["docker", "rm", cont_id])
-        if not os.path.exists(os.path.join(cur_dir, "bdist")):
-            os.makedirs(os.path.join(cur_dir, "bdist"))
+        else:
+            amp_dist.gen_base_full_name(conf_path=os.path.join(cur_dir, 'ampdist.conf'))
+            if find_executable("docker") is None:
+                print "docker command is not found"
+                print "installing docker.io..."
+                subprocess.call(["wget", "-qO-", "https://get.docker.com/", "|", "sh"])
 
-        shutil.copy(os.path.join(hvol_path, pack_name) + ".tar.gz", os.path.join(cur_dir, "bdist"))
-        shutil.rmtree(hvol_path)
+            amp_dist.image_search_and_download()
+            amp_dist.container_starter()
+            dir_util.copy_tree(cur_dir, os.path.join(amp_dist.hvol_path, dir_name))
+            command_1 = "cd " + amp_dist.cvol_path + dir_name + " && python " + sys.argv[0] + " install"
+            exec_comm_1 = """bash -c "%s" """ % command_1
+            amp_dist.exec_starter(exec_comm_1, stream=True)
+            cur_pack = UnpackedSDist(cur_dir)
+            pack_name = (cur_pack.name + '-' + cur_pack.version).encode('ascii') + ".tar.gz"
+            amp_dist.exec_gen_diff_file(stream=True)
+            amp_dist.diff_packager(pack_name, stream=True)
+            amp_dist.cont_destroyer()
+            if not os.path.exists(os.path.join(cur_dir, "bdist")):
+                os.makedirs(os.path.join(cur_dir, "bdist"))
+
+            file_util.copy_file(os.path.join(amp_dist.hvol_path, pack_name),
+                                os.path.join(cur_dir, "bdist"))
+
+        if amp_dist.debug_mode is False:
+            dir_util.remove_tree(amp_dist.hvol_path)
+
+
+class UploadBdist(Command):
+
+    description = "upload_amp command for amp"
+
+    user_options = []
+
+    def initialize_options(self):
+
+        pass
+
+    def finalize_options(self):
+
+        pass
+
+    def run(self):
+
+        cur_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        cur_pack = UnpackedSDist(cur_dir)
+        pack_name = cur_pack.name.encode('ascii', 'ignore')
+        version = cur_pack.version.encode('ascii', 'ignore')
+        full_name = (pack_name + "-" + version).encode('ascii', 'ignore')
+        if not os.path.exists(os.path.join(cur_dir, "bdist") + "/" + full_name + ".tar.gz"):
+            print os.path.join(cur_dir, "bdist") + "/" + full_name + ".tar.gz not found."
+
+        else:
+            if not os.path.exists(os.path.join(cur_dir, "ampdist.conf")):
+                print cur_dir + "ampdist.conf not found."
+
+            else:
+                config = ConfigParser.RawConfigParser()
+                config.read(os.path.join(cur_dir, 'ampdist.conf'))
+                user_name = config.get('Auth', 'user_name')
+                password = config.get('Auth', 'password')
+                url = config.get('Url', 'server_url')
+                base_ver = config.get('Image', 'base_ver')
+                base_name = config.get('Image', 'base_name')
+                r = requests.Session()
+                f = {'data': open(os.path.join(cur_dir, "bdist") + "/" + full_name + ".tar.gz", 'rb')}
+                resp = r.post(url+"/authn_http",
+                              params={'user_name': user_name, 'password': password})
+                if resp.status_code == requests.codes.ok:
+                    try:
+                        jresp = r.get(url+"/api-json/get_wagon",
+                                      params={"wagon.name": pack_name}).json()
+                        wagon_id = jresp['id']
+                    except:
+                        resp = r.post(url + "/put_wagon", params={"name": pack_name})
+                        jresp = r.get(url + "/api-json/get_wagon",
+                                      params={"wagon.name": pack_name}).json()
+                        wagon_id = jresp['id']
+
+                    package_is_exist = False
+                    for rempacks in jresp['rempacks']:
+                        if rempacks['version'] == version \
+                                and rempacks['base_ver'] == base_ver \
+                                and rempacks['base_name'] == base_name:
+                            print "This version of package is exist for this base."
+                            package_is_exist = True
+                            break
+
+                    if package_is_exist is False:
+                        r.post(url+"/put_rempack",
+                               params={"version": version,
+                                       "wagon.id": wagon_id,
+                                       "base_ver": base_ver,
+                                       "base_name": base_name
+                                       },
+                               files=f)
+
 
 # for use in your projects
 # add following lines to setup.py:
 # from ampdist.py import BdistAmp
 # setup(
 #              ...
-#            cmdclass={'bdist_amp': BdistAmp},
+#            cmdclass={'bdist_amp': BdistAmp,
+#                       'upload_amp': UploadBdist,
+#                       },
 #               ...
 #        )
 # usage: python setup.py bdist_amp
