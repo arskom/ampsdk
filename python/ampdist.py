@@ -163,8 +163,10 @@ class BdistAmp(Command):
     def run(self):
 
         amp_dist = AmpDistClient()
+
         cur_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
         dir_name = cur_dir.rsplit("/", 1)[1]
+
         if not os.path.exists(os.path.join(cur_dir, "ampdist.conf")):
             print cur_dir + "ampdist.conf not found."
 
@@ -178,7 +180,9 @@ class BdistAmp(Command):
 
             amp_dist.image_search_and_download()
             amp_dist.container_starter()
+
             dir_util.copy_tree(cur_dir, os.path.join(amp_dist.hvol_path, dir_name))
+
             command_1 = "cd " + amp_dist.cvol_path + dir_name + " && python " + sys.argv[0] + " install"
             exec_comm_1 = """bash -c "%s" """ % command_1
             amp_dist.exec_starter(exec_comm_1, stream=True)
@@ -218,11 +222,14 @@ class UploadBdist(Command):
 
     def run(self):
 
+        from pkginfo import UnpackedSDist
         cur_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
         cur_pack = UnpackedSDist(cur_dir)
+
         pack_name = cur_pack.name.encode('ascii', 'ignore')
         version = cur_pack.version.encode('ascii', 'ignore')
         full_name = (pack_name + "-" + version).encode('ascii', 'ignore')
+
         if not os.path.exists(os.path.join(cur_dir, "bdist") + "/" + full_name + ".tar.gz"):
             print os.path.join(cur_dir, "bdist") + "/" + full_name + ".tar.gz not found."
 
@@ -238,10 +245,12 @@ class UploadBdist(Command):
                 url = config.get('Url', 'server_url')
                 base_ver = config.get('Image', 'base_ver')
                 base_name = config.get('Image', 'base_name')
+
                 r = requests.Session()
                 f = {'data': open(os.path.join(cur_dir, "bdist") + "/" + full_name + ".tar.gz", 'rb')}
                 resp = r.post(url+"/authn_http",
                               params={'user_name': user_name, 'password': password})
+
                 if resp.status_code == requests.codes.ok:
                     try:
                         jresp = r.get(url+"/api-json/get_wagon",
