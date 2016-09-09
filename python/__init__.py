@@ -16,6 +16,6 @@
 #
 
 
-from ampsdk import BdistAmp   
-from ampsdk import UploadBdist
-from ampsdk import GenDiffFile
+from ampsdk.ampdist import BdistAmp
+from ampsdk.ampdist import UploadBdist
+from ampsdk.ampdist import AmpDistClient
