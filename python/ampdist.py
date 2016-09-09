@@ -30,16 +30,6 @@ from setuptools import Command
 from distutils import dir_util, file_util
 from distutils.spawn import find_executable
 
-try:
-    import docker
-except ImportError:
-    pass
-
-try:
-    from pkginfo import UnpackedSDist
-except ImportError:
-    pass
-
 
 gen_diff_py = """
 #!/usr/bin/env python
@@ -62,6 +52,8 @@ diff_file.close()
 class AmpDistClient(object):
 
     def __init__(self, hvol_path=None):
+        import docker
+        
         self.client = docker.Client()
         if hvol_path is None:
             self.hvol_path = tempfile.mkdtemp()
@@ -178,6 +170,7 @@ class BdistAmp(Command):
 
         else:
             amp_dist.gen_base_full_name(conf_path=os.path.join(cur_dir, 'ampdist.conf'))
+
             if find_executable("docker") is None:
                 print "docker command is not found"
                 print "installing docker.io..."
@@ -189,11 +182,16 @@ class BdistAmp(Command):
             command_1 = "cd " + amp_dist.cvol_path + dir_name + " && python " + sys.argv[0] + " install"
             exec_comm_1 = """bash -c "%s" """ % command_1
             amp_dist.exec_starter(exec_comm_1, stream=True)
+
+            from pkginfo import UnpackedSDist
             cur_pack = UnpackedSDist(cur_dir)
+
             pack_name = (cur_pack.name + '-' + cur_pack.version).encode('ascii') + ".tar.gz"
+
             amp_dist.exec_gen_diff_file(stream=True)
             amp_dist.diff_packager(pack_name, stream=True)
             amp_dist.cont_destroyer()
+
             if not os.path.exists(os.path.join(cur_dir, "bdist")):
                 os.makedirs(os.path.join(cur_dir, "bdist"))
 
