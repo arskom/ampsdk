@@ -129,11 +129,8 @@ class AmpDistClient(object):
 
     def image_search_and_download(self):
         im_list = self.client.images(name=self.base_full_name, quiet=True)
-        if im_list:
-            pass
-        else:
-            print
-            self.base_full_name + " is not found."
+        if not im_list:
+            print(self.base_full_name, " is not found.")
             self.client.pull(self.base_name, tag=self.base_ver)
 
     def container_starter(self, start=True):
