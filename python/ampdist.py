@@ -51,21 +51,23 @@ diff_file.close()
 
 
 class AmpDistClient(object):
-    def __init__(self, hvol_path=None):
+    def __init__(self, hvol_path=tempfile.mkdtemp(),
+                 cvol_path="/export/",
+                 base_full_name=None,
+                 base_name=None,
+                 base_ver=None,
+                 cont_id=None):
+
         import docker
 
         self.client = docker.Client()
-        if hvol_path is None:
-            self.hvol_path = tempfile.mkdtemp()
 
-        else:
-            self.hvol_path = hvol_path
-
-        self.cvol_path = "/export/"
-        self.base_full_name = None
-        self.base_name = None
-        self.base_ver = None
-        self.cont_id = None
+        self.hvol_path = hvol_path
+        self.cvol_path = cvol_path
+        self.base_full_name = base_full_name
+        self.base_name = base_name
+        self.base_ver = base_ver
+        self.cont_id = cont_id
         self.debug_mode = False
 
     def exec_starter(self, command, stream=False):
