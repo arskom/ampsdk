@@ -162,6 +162,13 @@ class AmpDistClient(object):
 
         return self.cont_id
 
+def resp_validate(resp):
+    if resp.status_code != requests.codes.ok:
+        print(resp.status_code, resp.text)
+        return False
+
+    return True
+
 
 class BdistAmp(Command):
     description = "bdist_amp command for amp (must use with sudo)"
@@ -271,8 +278,7 @@ class UploadBdist(Command):
         resp = r.post(url + "/authn_http",
             params={'user_name': user_name, 'password': password})
 
-        if resp.status_code != requests.codes.ok:
-            print(resp.status_code, resp.text)
+        if not resp_validate(resp):
             return
 
         try:
@@ -282,7 +288,10 @@ class UploadBdist(Command):
 
         except:
             resp = r.post(url + "/put_wagon", params={"name": pack_name})
-            # TODO: Validate resp
+
+            if not resp_validate(resp):
+                return
+
 
             jresp = r.get(url + "/api-json/get_wagon",
                 params={"wagon.name": pack_name}).json()
@@ -302,7 +311,11 @@ class UploadBdist(Command):
                 "base_ver": base_ver,
                 "base_name": base_name,
             }
-            r.post(url + "/put_rempack", params=params, files=f)
+            resp = r.post(url + "/put_rempack", params=params, files=f)
+
+            if not resp_validate(resp):
+                return
+
 
 # for use in your projects
 # add following lines to setup.py:
