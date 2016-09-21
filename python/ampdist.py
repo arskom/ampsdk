@@ -129,11 +129,21 @@ class AmpDistClient(object):
         self.client.stop(self.cont_id, timeout=timeout)
         self.client.remove_container(self.cont_id)
 
-    def image_search_and_download(self):
+    def image_search_and_download(self, download=True):
         im_list = self.client.images(name=self.base_full_name, quiet=True)
         if not im_list:
-            print(self.base_full_name, " is not found.")
-            self.client.pull(self.base_name, tag=self.base_ver)
+            if download is True:
+                for response in self.client.pull(self.base_name,
+                                                 tag=self.base_ver):
+                    if response.has_key('error'):
+                        return False
+                return True
+            return False
+        return True
+
+    def rm_hvol_path(self):
+        if self.debug_mode is False:
+            dir_util.remove_tree(self.hvol_path)
 
     def container_starter(self, start=True):
         ret = self.client.create_container(
@@ -185,7 +195,10 @@ class BdistAmp(Command):
                 subprocess.call(
                     ["wget", "-qO-", "https://get.docker.com/", "|", "sh"])
 
-            amp_dist.image_search_and_download()
+            if not amp_dist.image_search_and_download():
+                amp_dist.rm_hvol_path()
+                raise
+
             amp_dist.container_starter()
 
             dir_util.copy_tree(cur_dir,
@@ -212,8 +225,7 @@ class BdistAmp(Command):
             file_util.copy_file(os.path.join(amp_dist.hvol_path, pack_name),
                 os.path.join(cur_dir, "bdist"))
 
-        if amp_dist.debug_mode is False:
-            dir_util.remove_tree(amp_dist.hvol_path)
+        amp_dist.rm_hvol_path()
 
 
 class UploadBdist(Command):
