@@ -145,11 +145,21 @@ class AmpDistClient(object):
         if self.debug_mode is False:
             dir_util.remove_tree(self.hvol_path)
 
-    def container_starter(self, start=True):
+    def container_starter(self, start=True, restart=False, command="/bin/bash"):
+        if restart is False:
+            _restart = None
+
+        else:
+            _restart = {
+                "MaximumRetryCount": 0,
+                "Name": "always"
+            }
+
         ret = self.client.create_container(
-            self.base_full_name, command="/bin/bash",
+            self.base_full_name, command=command,
             volumes=[self.cvol_path],
             host_config=self.client.create_host_config(
+                restart=_restart,
                 binds={
                     self.hvol_path: self.cvol_path
                 }),
