@@ -56,7 +56,7 @@ class AmpDistClient(object):
                  base_full_name=None,
                  base_name=None,
                  base_ver=None,
-                 cont_id=None):
+                 debug_mode=False):
 
         import docker
 
@@ -67,11 +67,10 @@ class AmpDistClient(object):
         self.base_full_name = base_full_name
         self.base_name = base_name
         self.base_ver = base_ver
-        self.cont_id = cont_id
-        self.debug_mode = False
+        self.debug_mode = debug_mode
 
-    def exec_starter(self, command, stream=False):
-        _exec = self.client.exec_create(self.cont_id, command)
+    def exec_starter(self, cont_id, command, stream=False):
+        _exec = self.client.exec_create(cont_id, command)
         if stream is True:
             for i in self.client.exec_start(_exec, stream=True):
                 print
@@ -104,30 +103,30 @@ class AmpDistClient(object):
                 as gen_diff_file:
             gen_diff_file.writelines(gen_diff_py)
 
-    def exec_gen_diff_file(self, stream=False):
-        self.gen_diff_file_not_true()
+    def exec_gen_diff_file(self, cont_id, stream=False):
+        self.gen_diff_file_not_true(cont_id)
         self.gen_diff_file()
         command = "cd " + self.cvol_path + " && python gen_diff.py"
         exec_comm = """bash -c "%s" """ % command
-        self.exec_starter(exec_comm, stream=stream)
+        self.exec_starter(cont_id, exec_comm, stream=stream)
 
-    def gen_diff_file_not_true(self):
-        diffs = self.client.diff(self.cont_id)
+    def gen_diff_file_not_true(self, cont_id):
+        diffs = self.client.diff(cont_id)
         with open(self.hvol_path + '/diff_text_not_true.txt', 'w') \
                 as diff_file:
             for i in diffs:
                 if i['Kind'] == 1:
                     diff_file.writelines(i['Path'] + '\n')
 
-    def diff_packager(self, pack_name, stream=False):
+    def diff_packager(self, cont_id, pack_name, stream=False):
         exec_comm = "tar", "-cvf", \
                     os.path.join(self.cvol_path, pack_name), "-T", \
                     os.path.join(self.cvol_path, "diff_text.txt")
-        self.exec_starter(exec_comm, stream=stream)
+        self.exec_starter(cont_id, exec_comm, stream=stream)
 
-    def cont_destroyer(self, timeout=1):
-        self.client.stop(self.cont_id, timeout=timeout)
-        self.client.remove_container(self.cont_id)
+    def cont_destroyer(self, cont_id, timeout=1):
+        self.client.stop(cont_id, timeout=timeout)
+        self.client.remove_container(cont_id)
 
     def image_search_and_download(self, download=True):
         im_list = self.client.images(name=self.base_full_name, quiet=True)
@@ -145,32 +144,44 @@ class AmpDistClient(object):
         if self.debug_mode is False:
             dir_util.remove_tree(self.hvol_path)
 
-    def container_starter(self, start=True, restart=False, command="/bin/bash"):
-        if restart is False:
-            _restart = None
-
-        else:
+    def container_starter(self,
+                          start=True,
+                          restart=False,
+                          vol_and_binds=True,
+                          _command="/bin/bash"):
+        _restart = None
+        if restart is True:
             _restart = {
                 "MaximumRetryCount": 0,
                 "Name": "always"
             }
 
-        ret = self.client.create_container(
-            self.base_full_name, command=command,
-            volumes=[self.cvol_path],
-            host_config=self.client.create_host_config(
-                restart=_restart,
-                binds={
+        _volumes = None
+        _binds = None
+        if vol_and_binds is True:
+            _volumes = [self.cvol_path]
+            _binds = {
                     self.hvol_path: self.cvol_path
-                }),
+                }
+
+        ret = self.client.create_container(
+            self.base_full_name, command=_command,
+            volumes=_volumes,
+            host_config=self.client.create_host_config(
+                restart_policy=_restart,
+                binds=_binds),
             detach=True, stdin_open=True, tty=True
         )
-        self.cont_id = ret['Id']
+        cont_id = ret['Id']
 
         if start is True:
-            self.client.start(self.cont_id)
+            self.client.start(cont_id)
 
-        return self.cont_id
+        return cont_id
+
+    def from_cont_to_image(self, cont_id, new_image_name, new_tag):
+        self.client.commit(cont_id, repository=new_image_name, tag=new_tag)
+        
 
 def resp_validate(resp):
     if resp.status_code != requests.codes.ok:
@@ -216,7 +227,7 @@ class BdistAmp(Command):
                 amp_dist.rm_hvol_path()
                 raise
 
-            amp_dist.container_starter()
+            cont_id1 = amp_dist.container_starter()
 
             dir_util.copy_tree(cur_dir,
                 os.path.join(amp_dist.hvol_path, dir_name))
@@ -224,7 +235,7 @@ class BdistAmp(Command):
             command_1 = "cd " + amp_dist.cvol_path + dir_name + " && python " + \
                         sys.argv[0] + " install"
             exec_comm_1 = """bash -c "%s" """ % command_1
-            amp_dist.exec_starter(exec_comm_1, stream=True)
+            amp_dist.exec_starter(cont_id1, exec_comm_1, stream=True)
 
             from pkginfo import UnpackedSDist
             cur_pack = UnpackedSDist(cur_dir)
@@ -232,9 +243,9 @@ class BdistAmp(Command):
             pack_name = (cur_pack.name + '-' + cur_pack.version).encode(
                 'ascii') + ".tar.gz"
 
-            amp_dist.exec_gen_diff_file(stream=True)
-            amp_dist.diff_packager(pack_name, stream=True)
-            amp_dist.cont_destroyer()
+            amp_dist.exec_gen_diff_file(cont_id1, stream=True)
+            amp_dist.diff_packager(cont_id1, pack_name, stream=True)
+            amp_dist.cont_destroyer(cont_id1)
 
             if not os.path.exists(os.path.join(cur_dir, "bdist")):
                 os.makedirs(os.path.join(cur_dir, "bdist"))
@@ -246,7 +257,7 @@ class BdistAmp(Command):
 
 
 class UploadBdist(Command):
-    description = "upload_amp command for amp"
+    description = "upload_amp command for amp(must not use with sudo)"
 
     user_options = []
 
@@ -301,7 +312,6 @@ class UploadBdist(Command):
 
             if not resp_validate(resp):
                 return
-
 
             jresp = r.get(url + "/api-json/get_wagon",
                 params={"wagon.name": pack_name}).json()
