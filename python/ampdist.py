@@ -99,7 +99,7 @@ class AmpDistClient(object):
             if download is True:
                 for response in self.client.pull(self.base_name,
                                                  tag=self.base_ver):
-                    if response.has_key('error'):
+                    if response == "error":
                         return False
                 return True
             return False
