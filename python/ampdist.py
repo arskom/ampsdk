@@ -51,7 +51,7 @@ diff_file.close()
 
 
 class AmpDistClient(object):
-    def __init__(self, hvol_path=tempfile.mkdtemp(),
+    def __init__(self, hvol_path=None,
                  cvol_path="/export/",
                  base_full_name=None,
                  base_name=None,
@@ -62,22 +62,17 @@ class AmpDistClient(object):
 
         self.client = docker.Client()
 
-        self.hvol_path = hvol_path
+        if hvol_path is None:
+            self.hvol_path = tempfile.mkdtemp()
+
+        else:
+            self.hvol_path = hvol_path
+
         self.cvol_path = cvol_path
         self.base_full_name = base_full_name
         self.base_name = base_name
         self.base_ver = base_ver
         self.debug_mode = debug_mode
-
-    def exec_starter(self, cont_id, command, stream=False):
-        _exec = self.client.exec_create(cont_id, command)
-        if stream is True:
-            for i in self.client.exec_start(_exec, stream=True):
-                print
-                i
-
-        else:
-            self.client.exec_start(_exec)
 
     def gen_base_full_name(self, conf_path=None):
         if conf_path is None and (
@@ -98,36 +93,6 @@ class AmpDistClient(object):
             self.base_full_name = self.base_name + ":" + self.base_ver
             return self.base_full_name
 
-    def gen_diff_file(self):
-        with open(os.path.join(self.hvol_path, "gen_diff.py"), 'w') \
-                as gen_diff_file:
-            gen_diff_file.writelines(gen_diff_py)
-
-    def exec_gen_diff_file(self, cont_id, stream=False):
-        self.gen_diff_file_not_true(cont_id)
-        self.gen_diff_file()
-        command = "cd " + self.cvol_path + " && python gen_diff.py"
-        exec_comm = """bash -c "%s" """ % command
-        self.exec_starter(cont_id, exec_comm, stream=stream)
-
-    def gen_diff_file_not_true(self, cont_id):
-        diffs = self.client.diff(cont_id)
-        with open(self.hvol_path + '/diff_text_not_true.txt', 'w') \
-                as diff_file:
-            for i in diffs:
-                if i['Kind'] == 1:
-                    diff_file.writelines(i['Path'] + '\n')
-
-    def diff_packager(self, cont_id, pack_name, stream=False):
-        exec_comm = "tar", "-cvf", \
-                    os.path.join(self.cvol_path, pack_name), "-T", \
-                    os.path.join(self.cvol_path, "diff_text.txt")
-        self.exec_starter(cont_id, exec_comm, stream=stream)
-
-    def cont_destroyer(self, cont_id, timeout=1):
-        self.client.stop(cont_id, timeout=timeout)
-        self.client.remove_container(cont_id)
-
     def image_search_and_download(self, download=True):
         im_list = self.client.images(name=self.base_full_name, quiet=True)
         if not im_list:
@@ -139,10 +104,6 @@ class AmpDistClient(object):
                 return True
             return False
         return True
-
-    def rm_hvol_path(self):
-        if self.debug_mode is False:
-            dir_util.remove_tree(self.hvol_path)
 
     def container_starter(self,
                           start=True,
@@ -181,7 +142,53 @@ class AmpDistClient(object):
 
     def from_cont_to_image(self, cont_id, new_image_name, new_tag):
         self.client.commit(cont_id, repository=new_image_name, tag=new_tag)
-        
+
+    def exec_starter(self, cont_id, _command, stream=False):
+        _exec = self.client.exec_create(cont_id, _command)
+        if stream is True:
+            for i in self.client.exec_start(_exec, stream=True):
+                print
+                i
+
+        else:
+            self.client.exec_start(_exec)
+
+        return _exec
+
+    def cont_destroyer(self, cont_id, timeout=1):
+        self.client.stop(cont_id, timeout=timeout)
+        self.client.remove_container(cont_id)
+
+    def rm_hvol_path(self):
+        if self.debug_mode is False:
+            dir_util.remove_tree(self.hvol_path)
+
+    def gen_diff_file(self):
+        with open(os.path.join(self.hvol_path, "gen_diff.py"), 'w') \
+                as gen_diff_file:
+            gen_diff_file.writelines(gen_diff_py)
+
+    def gen_diff_file_not_true(self, cont_id):
+        diffs = self.client.diff(cont_id)
+        with open(self.hvol_path + '/diff_text_not_true.txt', 'w') \
+                as diff_file:
+            for i in diffs:
+                if i['Kind'] == 1:
+                    diff_file.writelines(i['Path'] + '\n')
+
+    def exec_gen_diff_file(self, cont_id, stream=False):
+        self.gen_diff_file_not_true(cont_id)
+        self.gen_diff_file()
+        command = "cd " + self.cvol_path + " && python gen_diff.py"
+        exec_comm = """bash -c "%s" """ % command
+        self.exec_starter(cont_id, exec_comm, stream=stream)
+
+    def diff_packager(self, cont_id, pack_name, stream=False):
+        exec_comm = "tar", "-cvf", \
+                    os.path.join(self.cvol_path, pack_name), "-T", \
+                    os.path.join(self.cvol_path, "diff_text.txt")
+        self.exec_starter(cont_id, exec_comm, stream=stream)
+
 
 def resp_validate(resp):
     if resp.status_code != requests.codes.ok:
@@ -189,6 +196,33 @@ def resp_validate(resp):
         return False
 
     return True
+
+
+def is_docker_exist(install=False):
+    if find_executable("docker") is None:
+        print
+        "docker command is not found"
+        print
+        "installing docker.io..."
+        if install:
+            try:
+                subprocess.check_call(["wget", "-qO-",
+                                       "https://get.docker.com/",
+                                       "|", "sh"])
+
+            except subprocess.CalledProcessError:
+                print
+                "Docker installation is failed."
+                return False
+
+            except OSError:
+                print
+                "wget not found."
+                return False
+            return True
+        return False
+    else:
+        return True
 
 
 class BdistAmp(Command):
@@ -203,25 +237,21 @@ class BdistAmp(Command):
         pass
 
     def run(self):
-        amp_dist = AmpDistClient()
+        if is_docker_exist(install=True):
+            amp_dist = AmpDistClient()
+
+        else:
+            raise
 
         cur_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
         dir_name = cur_dir.rsplit("/", 1)[1]
 
         if not os.path.exists(os.path.join(cur_dir, "ampdist.conf")):
-            print(cur_dir + "ampdist.conf not found.")
+            print(cur_dir + "/ampdist.conf not found.")
 
         else:
             amp_dist.gen_base_full_name(
                 conf_path=os.path.join(cur_dir, 'ampdist.conf'))
-
-            if find_executable("docker") is None:
-                print
-                "docker command is not found"
-                print
-                "installing docker.io..."
-                subprocess.call(
-                    ["wget", "-qO-", "https://get.docker.com/", "|", "sh"])
 
             if not amp_dist.image_search_and_download():
                 amp_dist.rm_hvol_path()
@@ -277,7 +307,7 @@ class UploadBdist(Command):
         version = cur_pack.version.encode('ascii', 'ignore')
         full_name = (pack_name + "-" + version).encode('ascii', 'ignore')
 
-        file_name = os.path.join(cur_dir, "bdist") + "/" + full_name + ".tar.gz"
+        file_name = os.path.join(cur_dir, "bdist", full_name + ".tar.gz")
         if not os.path.exists(file_name):
             print(file_name, "not found.")
             return
